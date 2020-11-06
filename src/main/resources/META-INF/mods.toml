@@ -1,0 +1,29 @@
+modLoader="javafml"
+loaderVersion="[31,)"
+license="MIT License"
+
+[[mods]]
+modId="bombardier"
+version="${version}"
+displayName="Bombardier"
+#updateJSONURL="http://myurl.me/" #optional
+#displayURL="http://example.com/" #optional
+credits="tweakyllama"
+authors="tweakyllama"
+description='''
+Bombs!
+'''
+
+[[dependencies.bombardier]]
+    modId="forge"
+    mandatory=true
+    versionRange="[31,)"
+    ordering="NONE"
+    side="BOTH"
+
+[[dependencies.bombardier]]
+    modId="minecraft"
+    mandatory=true
+    versionRange="[1.16.3]"
+    ordering="NONE"
+    side="BOTH"
