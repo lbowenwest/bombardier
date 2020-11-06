@@ -5,12 +5,14 @@ import com.google.common.collect.ImmutableMap;
 import com.google.common.collect.Maps;
 import net.minecraft.block.Block;
 import net.minecraft.block.BlockState;
+import net.minecraft.block.Blocks;
 import net.minecraft.entity.LivingEntity;
 import net.minecraft.entity.player.PlayerEntity;
 import net.minecraft.item.BlockItemUseContext;
 import net.minecraft.item.Item;
 import net.minecraft.item.ItemStack;
 import net.minecraft.item.Items;
+import net.minecraft.particles.ParticleTypes;
 import net.minecraft.state.BooleanProperty;
 import net.minecraft.state.EnumProperty;
 import net.minecraft.state.StateContainer;
@@ -27,13 +29,15 @@ import net.minecraft.world.IWorld;
 import net.minecraft.world.IWorldReader;
 import net.minecraft.world.World;
 import net.minecraft.world.server.ServerWorld;
+import net.minecraftforge.api.distmarker.Dist;
+import net.minecraftforge.api.distmarker.OnlyIn;
+import tweakyllama.bombardier.Bombardier;
 import tweakyllama.bombardier.base.handler.RegistryHandler;
 import tweakyllama.bombardier.fuse.Fuse;
-import tweakyllama.bombardier.fuse.api.Ignitable;
+import tweakyllama.bombardier.fuse.api.FuseIgnitable;
 
 import javax.annotation.Nullable;
-import java.util.Map;
-import java.util.Random;
+import java.util.*;
 
 @SuppressWarnings("deprecation")
 public class FuseBlock extends Block {
@@ -45,9 +49,20 @@ public class FuseBlock extends Block {
 
     public static final Map<Direction, EnumProperty<RedstoneSide>> FACING_PROPERTY_MAP = Maps.newEnumMap(ImmutableMap.of(Direction.NORTH, NORTH, Direction.EAST, EAST, Direction.SOUTH, SOUTH, Direction.WEST, WEST));
 
+    private static final List<EnumProperty<RedstoneSide>> SIDES = Arrays.asList(NORTH, EAST, SOUTH, WEST);
     private static final VoxelShape BASE_SHAPE = Block.makeCuboidShape(3.0D, 0.0D, 3.0D, 13.0D, 1.0D, 13.0D);
-    private static final Map<Direction, VoxelShape> SIDE_TO_SHAPE = Maps.newEnumMap(ImmutableMap.of(Direction.NORTH, Block.makeCuboidShape(3.0D, 0.0D, 0.0D, 13.0D, 1.0D, 13.0D), Direction.SOUTH, Block.makeCuboidShape(3.0D, 0.0D, 3.0D, 13.0D, 1.0D, 16.0D), Direction.EAST, Block.makeCuboidShape(3.0D, 0.0D, 3.0D, 16.0D, 1.0D, 13.0D), Direction.WEST, Block.makeCuboidShape(0.0D, 0.0D, 3.0D, 13.0D, 1.0D, 13.0D)));
-    private static final Map<Direction, VoxelShape> SIDE_TO_ASCENDING_SHAPE = Maps.newEnumMap(ImmutableMap.of(Direction.NORTH, VoxelShapes.or(SIDE_TO_SHAPE.get(Direction.NORTH), Block.makeCuboidShape(3.0D, 0.0D, 0.0D, 13.0D, 16.0D, 1.0D)), Direction.SOUTH, VoxelShapes.or(SIDE_TO_SHAPE.get(Direction.SOUTH), Block.makeCuboidShape(3.0D, 0.0D, 15.0D, 13.0D, 16.0D, 16.0D)), Direction.EAST, VoxelShapes.or(SIDE_TO_SHAPE.get(Direction.EAST), Block.makeCuboidShape(15.0D, 0.0D, 3.0D, 16.0D, 16.0D, 13.0D)), Direction.WEST, VoxelShapes.or(SIDE_TO_SHAPE.get(Direction.WEST), Block.makeCuboidShape(0.0D, 0.0D, 3.0D, 1.0D, 16.0D, 13.0D))));
+    private static final Map<Direction, VoxelShape> SIDE_TO_SHAPE = Maps.newEnumMap(ImmutableMap.of(
+            Direction.NORTH, Block.makeCuboidShape(3.0D, 0.0D, 0.0D, 13.0D, 1.0D, 13.0D),
+            Direction.SOUTH, Block.makeCuboidShape(3.0D, 0.0D, 3.0D, 13.0D, 1.0D, 16.0D),
+            Direction.EAST, Block.makeCuboidShape(3.0D, 0.0D, 3.0D, 16.0D, 1.0D, 13.0D),
+            Direction.WEST, Block.makeCuboidShape(0.0D, 0.0D, 3.0D, 13.0D, 1.0D, 13.0D)
+    ));
+    private static final Map<Direction, VoxelShape> SIDE_TO_ASCENDING_SHAPE = Maps.newEnumMap(ImmutableMap.of(
+            Direction.NORTH, VoxelShapes.or(SIDE_TO_SHAPE.get(Direction.NORTH), Block.makeCuboidShape(3.0D, 0.0D, 0.0D, 13.0D, 16.0D, 1.0D)),
+            Direction.SOUTH, VoxelShapes.or(SIDE_TO_SHAPE.get(Direction.SOUTH), Block.makeCuboidShape(3.0D, 0.0D, 15.0D, 13.0D, 16.0D, 16.0D)),
+            Direction.EAST, VoxelShapes.or(SIDE_TO_SHAPE.get(Direction.EAST), Block.makeCuboidShape(15.0D, 0.0D, 3.0D, 16.0D, 16.0D, 13.0D)),
+            Direction.WEST, VoxelShapes.or(SIDE_TO_SHAPE.get(Direction.WEST), Block.makeCuboidShape(0.0D, 0.0D, 3.0D, 1.0D, 16.0D, 13.0D))
+    ));
     private final Map<BlockState, VoxelShape> stateToShapeMap = Maps.newHashMap();
 
     public FuseBlock(Properties properties) {
@@ -64,7 +79,8 @@ public class FuseBlock extends Block {
                 this.stateToShapeMap.put(state, this.getShapeForState(state));
             }
         }
-        RegistryHandler.registerBlock(this, "fuse");
+        // currently register a block item to make placement logic easier
+        RegistryHandler.registerBlock(this, "fuse", true);
     }
 
     @Override
@@ -72,6 +88,9 @@ public class FuseBlock extends Block {
         builder.add(NORTH, EAST, SOUTH, WEST, LIT);
     }
 
+    /**
+     * Precalculates the voxel shape for a fuse block for a given state
+     */
     private VoxelShape getShapeForState(BlockState state) {
         VoxelShape voxelshape = BASE_SHAPE;
 
@@ -92,96 +111,94 @@ public class FuseBlock extends Block {
     }
 
     public BlockState getStateForPlacement(BlockItemUseContext context) {
+        Bombardier.LOGGER.info("getting initial state for placement");
         return this.getUpdatedState(context.getWorld(), this.getDefaultState(), context.getPos());
     }
 
     private BlockState getUpdatedState(IBlockReader world, BlockState state, BlockPos pos) {
-        boolean previouslyInvalid = areAllSidesInvalid(state);
-        state = this.recalculateFacingState(world, this.getDefaultState().with(LIT, state.get(LIT)), pos);
-        if (!previouslyInvalid || !areAllSidesInvalid(state)) {
-            boolean northConnected = state.get(NORTH).func_235921_b_();
-            boolean southConnected = state.get(SOUTH).func_235921_b_();
-            boolean eastConnected = state.get(EAST).func_235921_b_();
-            boolean westConnected = state.get(WEST).func_235921_b_();
-            boolean notNorthSouth = !northConnected && !southConnected;
-            boolean notEastWest = !eastConnected && !westConnected;
-
-            if (!westConnected && notNorthSouth)
-                state = state.with(WEST, RedstoneSide.SIDE);
-
-            if (!eastConnected && notNorthSouth)
-                state = state.with(EAST, RedstoneSide.SIDE);
-
-            if (!northConnected && notEastWest)
-                state = state.with(NORTH, RedstoneSide.SIDE);
-
-            if (!southConnected && notEastWest)
-                state = state.with(SOUTH, RedstoneSide.SIDE);
-
+//        return recalculateFacingState(world, state, pos);
+//        boolean previouslyInvalid = areAllSidesNotConnected(state);
+//        state = this.recalculateFacingState(world, this.getDefaultState().with(LIT, state.get(LIT)), pos);
+//        if (!previouslyInvalid || !areAllSidesNotConnected(state)) {
+//            boolean northConnected = state.get(NORTH) != RedstoneSide.NONE;
+//            boolean southConnected = state.get(SOUTH) != RedstoneSide.NONE;
+//            boolean eastConnected = state.get(EAST) != RedstoneSide.NONE;
+//            boolean westConnected = state.get(WEST) != RedstoneSide.NONE;
+//            boolean notNorthSouth = !northConnected && !southConnected;
+//            boolean notEastWest = !eastConnected && !westConnected;
+//
+//            if (!westConnected && notNorthSouth)
+//                state = state.with(WEST, RedstoneSide.SIDE);
+//
+//            if (!eastConnected && notNorthSouth)
+//                state = state.with(EAST, RedstoneSide.SIDE);
+//
+//            if (!northConnected && notEastWest)
+//                state = state.with(NORTH, RedstoneSide.SIDE);
+//
+//            if (!southConnected && notEastWest)
+//                state = state.with(SOUTH, RedstoneSide.SIDE);
+//
+//        }
+//        return state;
+//        boolean nonNormalCubeAbove = !world.getBlockState(pos.up()).isNormalCube(world, pos);
+        for (Direction direction : Direction.Plane.HORIZONTAL) {
+            RedstoneSide side = this.getSideConnection(world, state, pos, direction);
+            state = state.with(FACING_PROPERTY_MAP.get(direction), side);
         }
         return state;
     }
 
-    private BlockState recalculateFacingState(IBlockReader world, BlockState state, BlockPos pos) {
-        boolean nonNormalCubeAbove = !world.getBlockState(pos.up()).isNormalCube(world, pos);
-        for (Direction direction : Direction.Plane.HORIZONTAL) {
-            if (!state.get(FACING_PROPERTY_MAP.get(direction)).func_235921_b_()) {
-                RedstoneSide side = this.recalculateSide(world, pos, direction, nonNormalCubeAbove);
-                state = state.with(FACING_PROPERTY_MAP.get(direction), side);
-            }
+    private RedstoneSide getSideConnection(IBlockReader world, BlockState state, BlockPos pos, Direction direction) {
+        BlockPos offset = pos.offset(direction);
+        BlockState offsetState = world.getBlockState(offset);
+
+        if (!canConnectTo(offsetState)) {
+            // TODO handle upwards connection
+            return RedstoneSide.NONE;
+        } else {
+            return RedstoneSide.SIDE;
         }
-        return state;
+
     }
 
     @Override
     public BlockState updatePostPlacement(BlockState stateIn, Direction facing, BlockState facingState, IWorld worldIn, BlockPos currentPos, BlockPos facingPos) {
+        Bombardier.LOGGER.info("update post placement");
         if (facing == Direction.DOWN) {
             return stateIn;
         } else if (facing == Direction.UP) {
             return this.getUpdatedState(worldIn, stateIn, currentPos);
         } else {
-            RedstoneSide redstoneSide = this.getSide(worldIn, currentPos, facing);
-            if (redstoneSide.func_235921_b_() == stateIn.get(FACING_PROPERTY_MAP.get(facing)).func_235921_b_() && !areAllSidesValid(stateIn)) {
-                return stateIn.with(FACING_PROPERTY_MAP.get(facing), redstoneSide);
-            } else {
-                return this.getUpdatedState(
-                        worldIn,
-                        this.getDefaultState().with(LIT, stateIn.get(LIT)).with(FACING_PROPERTY_MAP.get(facing), redstoneSide),
-                        currentPos
-                );
-            }
+            return this.getUpdatedState(worldIn, stateIn, currentPos);
+//            RedstoneSide redstoneSide = this.getSide(worldIn, currentPos, facing);
+//            if (redstoneSide.func_235921_b_() == stateIn.get(FACING_PROPERTY_MAP.get(facing)).func_235921_b_() && !areAllSidesValid(stateIn)) {
+//                return stateIn.with(FACING_PROPERTY_MAP.get(facing), redstoneSide);
+//            } else {
+    //            return this.getUpdatedState(
+    //                    worldIn,
+    //                    this.getDefaultState().with(LIT, stateIn.get(LIT)).with(FACING_PROPERTY_MAP.get(facing), redstoneSide),
+    //                    currentPos
+    //            );
+//            }
+
         }
     }
 
-    private static boolean areAllSidesValid(BlockState state) {
-        return state.get(NORTH).func_235921_b_() && state.get(SOUTH).func_235921_b_() && state.get(EAST).func_235921_b_() && state.get(WEST).func_235921_b_();
+    private static boolean isSideConnected(BlockState state, Direction direction) {
+        return isSideConnected(state, FACING_PROPERTY_MAP.get(direction));
     }
 
-    private static boolean areAllSidesInvalid(BlockState state) {
-        return !state.get(NORTH).func_235921_b_() && !state.get(SOUTH).func_235921_b_() && !state.get(EAST).func_235921_b_() && !state.get(WEST).func_235921_b_();
+    private static boolean isSideConnected(BlockState state, EnumProperty<RedstoneSide> side) {
+        return state.get(side) != RedstoneSide.NONE;
     }
 
-    private RedstoneSide getSide(IBlockReader world, BlockPos pos, Direction face) {
-        return this.recalculateSide(world, pos, face, !world.getBlockState(pos.up()).isNormalCube(world, pos));
+    private static boolean areAllSidesConnected(BlockState state) {
+        return SIDES.stream().allMatch(side -> isSideConnected(state, side));
     }
 
-    private RedstoneSide recalculateSide(IBlockReader world, BlockPos pos, Direction direction, boolean nonNormalCubeAbove) {
-        BlockPos blockPos = pos.offset(direction);
-        BlockState state = world.getBlockState(pos);
-        if (nonNormalCubeAbove) {
-            if (this.canPlaceOnTopOf(world, blockPos, state) && this.canConnectTo(world.getBlockState(blockPos.up()))) {
-                if (state.isSolidSide(world, blockPos, direction.getOpposite())) {
-                    return RedstoneSide.UP;
-                } else {
-                    return RedstoneSide.SIDE;
-                }
-            }
-        }
-        if (!canConnectTo(state) && (state.isNormalCube(world, blockPos) || !canConnectTo(world.getBlockState(blockPos.down())))) {
-            return RedstoneSide.NONE;
-        } else {
-            return RedstoneSide.SIDE;
-        }
+    private static boolean areAllSidesNotConnected(BlockState state) {
+        return SIDES.stream().noneMatch(side -> isSideConnected(state, side));
     }
 
     @Override
@@ -197,36 +214,72 @@ public class FuseBlock extends Block {
 
     @Override
     public void tick(BlockState state, ServerWorld worldIn, BlockPos pos, Random rand) {
-        super.tick(state, worldIn, pos, rand);
+        worldIn.addParticle(ParticleTypes.LARGE_SMOKE, pos.getX() + 0.5, pos.getY() + 0.2, pos.getZ() +0.5,0, 0.2, 0 );
+        worldIn.removeBlock(pos, false);
+
+        for (Direction direction : Direction.Plane.HORIZONTAL) {
+            RedstoneSide side = getSideConnection(worldIn, state, pos, direction);
+            BlockPos offset = pos.offset(direction);
+            switch (side) {
+                case UP:
+                    ignite(worldIn, offset.up());
+                    break;
+                case SIDE:
+                    // TODO this won't go down slopes
+                    ignite(worldIn, offset);
+                    break;
+                default:
+                    break;
+            }
+
+        }
     }
 
-    @Override
-    public void catchFire(BlockState state, World world, BlockPos pos, @Nullable Direction face, @Nullable LivingEntity igniter) {
+    /**
+     * Called when the block is ignited
+     */
+    public void ignite(World world, BlockPos pos) {
+        Bombardier.LOGGER.info("fuse block ignited");
+        BlockState state = world.getBlockState(pos);
         world.setBlockState(pos, state.with(LIT, true));
         world.getPendingBlockTicks().scheduleTick(pos, this, Fuse.fuseBurnTime);
     }
 
+    /**
+     * Determines if a block can catch fire
+     */
     @Override
     public boolean isFlammable(BlockState state, IBlockReader world, BlockPos pos, Direction face) {
         return true;
     }
 
-    /**
-     * @param state
-     * @return
-     */
-    public boolean canConnectTo(BlockState state) {
-        return state.isIn(this) || state.getBlock() instanceof Ignitable;
+    @Override
+    public void catchFire(BlockState state, World world, BlockPos pos, @Nullable Direction face, @Nullable LivingEntity igniter) {
+        this.ignite(world, pos);
     }
 
+    /**
+     * Checks if the fuse can connect to a block state
+     */
+    public boolean canConnectTo(BlockState state) {
+        return state.isIn(this) || state.getBlock() instanceof FuseIgnitable;
+    }
+
+    /**
+     * Called when the block is activated
+     * If block activated with a flint and steel or a fire charge then ignite
+     */
     @Override
     public ActionResultType onBlockActivated(BlockState state, World worldIn, BlockPos pos, PlayerEntity player, Hand handIn, BlockRayTraceResult hit) {
+        if (state.get(LIT)) {
+            return ActionResultType.PASS;
+        }
         ItemStack itemstack = player.getHeldItem(handIn);
         Item item = itemstack.getItem();
         if (item != Items.FLINT_AND_STEEL && item != Items.FIRE_CHARGE) {
             return super.onBlockActivated(state, worldIn, pos, player, handIn, hit);
         } else {
-            catchFire(state, worldIn, pos, hit.getFace(), player);
+            this.ignite(worldIn, pos);
             if (!player.isCreative()) {
                 if (item == Items.FLINT_AND_STEEL) {
                     itemstack.damageItem(1, player, (player1) -> player1.sendBreakAnimation(handIn));
@@ -235,7 +288,7 @@ public class FuseBlock extends Block {
                 }
             }
 
-            return ActionResultType.func_233537_a_(worldIn.isRemote);
+            return worldIn.isRemote ? ActionResultType.SUCCESS : ActionResultType.CONSUME;
         }
     }
 
@@ -291,11 +344,29 @@ public class FuseBlock extends Block {
 
     @Override
     public void neighborChanged(BlockState state, World worldIn, BlockPos pos, Block blockIn, BlockPos fromPos, boolean isMoving) {
+        if (!state.get(LIT)) {
+            BlockState otherState = worldIn.getBlockState(fromPos);
+            if (otherState.isIn(Blocks.FIRE)) {
+                ignite(worldIn, pos);
+            }
+        }
         if (!worldIn.isRemote) {
             if (!state.isValidPosition(worldIn, pos)) {
                 spawnDrops(state, worldIn, pos);
                 worldIn.removeBlock(pos, false);
             }
+        }
+    }
+
+    @Override
+    @OnlyIn(Dist.CLIENT)
+    public void animateTick(BlockState stateIn, World worldIn, BlockPos pos, Random rand) {
+        if (stateIn.get(LIT)) {
+            float x = pos.getX() + 0.2f + rand.nextFloat() * 0.6f;
+            float y = pos.getY() + 0.2f;
+            float z = pos.getZ() + 0.2f + rand.nextFloat() * 0.6f;
+            worldIn.addParticle(ParticleTypes.FLAME, x, y, z, 0, 0, 0);
+            worldIn.addParticle(ParticleTypes.SMOKE, x, y, z, 0, 0, 0);
         }
     }
 
